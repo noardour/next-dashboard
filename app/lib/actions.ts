@@ -6,26 +6,47 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 
 const FormSchema = z.object({
-  id: z.string(),
+  id: z.string({ invalid_type_error: 'Please select a customer.' }),
   customerId: z.string(),
-  amount: z.coerce.number(),
-  status: z.enum(['pending', 'paid']),
+  amount: z.coerce
+    .number()
+    .gt(0, { message: 'Please enter an amount greater than $0.' }),
+  status: z.enum(['pending', 'paid'], {
+    invalid_type_error: 'Please select an invoice status.',
+  }),
   date: z.string(),
 });
 
 const CreateInvoiceSchema = FormSchema.omit({ id: true, date: true });
 
-export async function createInvoice(formData: FormData) {
+export type State = {
+  errors?: {
+    customerId?: string[];
+    amount?: string[];
+    status?: string[];
+  };
+  message?: string | null;
+};
+
+export async function createInvoice(prevState: State, formData: FormData) {
+  const validatedFields = CreateInvoiceSchema.safeParse({
+    customerId: formData.get('customerId'),
+    amount: formData.get('amount'),
+    status: formData.get('status'),
+  });
+
+  if (!validatedFields.success) {
+    return {
+      errors: validatedFields.error.flatten().fieldErrors,
+      message: 'Missing Fields. Failed to Create Invoice.',
+    };
+  }
+
+  const { customerId, amount, status } = validatedFields.data;
+  const amountInCents = amount * 100;
+  const date = new Date().toISOString().split('T')[0];
+
   try {
-    const { customerId, amount, status } = CreateInvoiceSchema.parse({
-      customerId: formData.get('customerId'),
-      amount: formData.get('amount'),
-      status: formData.get('status'),
-    });
-
-    const amountInCents = amount * 100;
-    const date = new Date().toISOString().split('T')[0];
-
     await sql`
       INSERT INTO invoices (customer_id, amount, status, date)
       VALUES (${customerId}, ${amountInCents}, ${status}, ${date})
@@ -42,15 +63,28 @@ export async function createInvoice(formData: FormData) {
 
 const UpdateInvoiceSchema = FormSchema.omit({ id: true, date: true });
 
-export async function updateInvoice(id: string, formData: FormData) {
-  try {
-    const { customerId, amount, status } = UpdateInvoiceSchema.parse({
-      customerId: formData.get('customerId'),
-      amount: formData.get('amount'),
-      status: formData.get('status'),
-    });
-    const amountInCents = amount * 100;
+export async function updateInvoice(
+  id: string,
+  prevState: State,
+  formData: FormData,
+) {
+  const validatedFields = UpdateInvoiceSchema.safeParse({
+    customerId: formData.get('customerId'),
+    amount: formData.get('amount'),
+    status: formData.get('status'),
+  });
 
+  if (!validatedFields.success) {
+    return {
+      errors: validatedFields.error.flatten().fieldErrors,
+      message: 'Failed to Create Invoice.',
+    };
+  }
+
+  const { customerId, amount, status } = validatedFields.data;
+  const amountInCents = amount * 100;
+
+  try {
     await sql`
       UPDATE invoices
       SET customer_id = ${customerId}, amount = ${amountInCents}, status = ${status}
